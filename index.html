@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Travel Bucket List</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+    integrity="sha256-sA+e2R+EiV7k6QZhF70VFv5UJkN4pr1EypG9oH+uczo="
+    crossorigin=""
+  />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script
+    src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+    integrity="sha256-o9N1j6rLfG59Yy2LXNlYgq7IL9byRMKQ1hMD+rlw0V0="
+    crossorigin=""
+  ></script>
+  <style>
+    body {
+      background-color: #f8f9fa;
+    }
+    .card-img-top {
+      height: 200px;
+      object-fit: cover;
+    }
+    .filter-select {
+      max-width: 200px;
+    }
+    #map {
+      height: 200px;
+      width: 100%;
+      margin-bottom: 15px;
+      border-radius: 0.375rem;
+    }
+   /* Updated chart styling */
+#continentChart {
+  max-width: 400px;
+  max-height: 120px;
+  width: 100%;
+  height: auto;
+}
+
+  </style>
+</head>
+<body>
+  <div class="container py-5">
+    <h1 class="text-center mb-4">🌍 Travel Bucket List</h1>
+
+    <!-- Search for new destination -->
+    <div class="mb-3 d-flex gap-2 flex-wrap">
+      <input
+        type="text"
+        id="searchInput"
+        class="form-control"
+        placeholder="Enter a country name..."
+      />
+      <select id="recommendTripType" class="form-select filter-select" style="max-width: 150px;">
+        <option value="">-- Trip Type (optional) --</option>
+        <option value="Adventure">Adventure</option>
+        <option value="Culture">Culture</option>
+        <option value="History">History</option>
+        <option value="Beach">Beach</option>
+        <option value="Nature">Nature</option>
+        <option value="Explore">Explore</option>
+      </select>
+      <button class="btn btn-primary flex-grow-1 flex-sm-grow-0" onclick="searchDestination()">Search</button>
+    </div>
+
+    <!-- Filters -->
+    <div class="d-flex justify-content-between align-items-center flex-wrap mb-3 gap-2">
+      <h4>Saved Dream Trips</h4>
+      <select
+        id="filterSelect"
+        class="form-select filter-select"
+        onchange="filterDestinations()"
+      >
+        <option value="all">All Continents</option>
+        <option value="Africa">Africa</option>
+        <option value="Asia">Asia</option>
+        <option value="Europe">Europe</option>
+        <option value="Americas">Americas</option>
+        <option value="Oceania">Oceania</option>
+      </select>
+      <select
+        id="tripTypeFilter"
+        class="form-select filter-select"
+        onchange="filterDestinations()"
+      >
+        <option value="all">All Trip Types</option>
+        <option value="Adventure">Adventure</option>
+        <option value="Culture">Culture</option>
+        <option value="History">History</option>
+        <option value="Beach">Beach</option>
+        <option value="Nature">Nature</option>
+        <option value="Explore">Explore</option>
+      </select>
+      <select
+        id="sortSelect"
+        class="form-select filter-select"
+        onchange="sortDestinations()"
+      >
+        <option value="date">Sort by Date Added</option>
+        <option value="name">Sort by Name (A-Z)</option>
+        <option value="tripType">Sort by Trip Type</option>
+        <option value="visited">Sort by Visited Status</option>
+      </select>
+    </div>
+
+    <!-- Search saved trips and Clear All -->
+    <div class="mb-3 d-flex gap-2 flex-wrap">
+      <input
+        type="text"
+        id="searchSavedInput"
+        class="form-control"
+        placeholder="Search saved trips..."
+        oninput="searchSavedTrips()"
+      />
+      <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
+    </div>
+
+    <!-- Chart -->
+    <div class="my-4">
+        <canvas id="continentChart" width="400" height="120"></canvas>
+    </div>
+
+    <!-- Saved Destinations -->
+    <div id="destinations" class="row g-4"></div>
+  </div>
+
+  <script>
+    const OPENWEATHERMAP_API_KEY = "3e1f0d65135ab745653d1def8c7e7bf8"; // Replace with your key
+
+    // Get trip type recommendation map
+    function guessTripType(region) {
+      const map = {
+        Africa: "Adventure",
+        Asia: "Culture",
+        Europe: "History",
+        Americas: "Beach",
+        Oceania: "Nature",
+      };
+      return map[region] || "Explore";
+    }
+
+    // Fetch country description from Wikipedia API
+    async function fetchCountryDescription(countryName) {
+      try {
+        const res = await fetch(
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
+            countryName
+          )}`
+        );
+        if (!res.ok) return "Description not available.";
+        const data = await res.json();
+        return data.extract || "Description not available.";
+      } catch {
+        return "Description not available.";
+      }
+    }
+
+    // Fetch weather by city
+    async function fetchWeather(city) {
+      if (!city) return null;
+      try {
+        const res = await fetch(
+          `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(
+            city
+          )}&units=metric&appid=${OPENWEATHERMAP_API_KEY}`
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        return {
+          temp: data.main.temp,
+          description: data.weather[0].description,
+          icon: `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`,
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    // Search and add destination(s)
+    async function searchDestination() {
+      const query = document.getElementById("searchInput").value.trim();
+      if (!query) return alert("Please enter a country name.");
+
+      const recommendTripType = document.getElementById("recommendTripType").value;
+
+      try {
+        // Fetch main country data
+        const countryRes = await fetch(
+          "https://restcountries.com/v3.1/name/" + query
+        );
+        if (!countryRes.ok) throw new Error("Country not found");
+        const countryData = await countryRes.json();
+        const info = countryData[0];
+
+        // Determine trip type either by user selection or by region default
+        const tripType = recommendTripType || guessTripType(info.region);
+
+        // Fetch Unsplash image
+        const unsplashRes = await fetch(
+          `https://api.unsplash.com/search/photos?query=${query}&client_id=xVmS7ohPtHlLwv03K0-hxHfxl-YXX3BI0NcKWT5dIHE`
+        );
+        const unsplashData = await unsplashRes.json();
+        const imageUrl =
+          unsplashData.results[0]?.urls?.regular || "https://via.placeholder.com/300x200";
+
+        // Fetch country description
+        const description = await fetchCountryDescription(info.name.common);
+
+        // Fetch weather for capital
+        const weather = await fetchWeather(info.capital?.[0]);
+
+        // Compose languages string
+        const languages = info.languages
+          ? Object.values(info.languages).join(", ")
+          : "N/A";
+
+        // Compose currency string
+        const currencies = info.currencies
+          ? Object.values(info.currencies)
+              .map((c) => `${c.name} (${c.symbol})`)
+              .join(", ")
+          : "N/A";
+
+        // Compose travel tips (simple hardcoded based on trip type)
+        const travelTipsMap = {
+          Adventure:
+            "Pack sturdy boots and be ready for outdoor activities and hiking.",
+          Culture: "Respect local customs and try to learn some phrases.",
+          History: "Visit museums and historical landmarks.",
+          Beach: "Don't forget sunscreen and swimwear.",
+          Nature: "Bring binoculars and eco-friendly gear.",
+          Explore: "Be curious and open to new experiences.",
+        };
+        const travelTips = travelTipsMap[tripType] || "";
+
+        // Create new destination object
+        const newDest = {
+          name: info.name.common,
+          region: info.region,
+          flag: info.flags.png,
+          image: imageUrl,
+          tripType: tripType,
+          dateAdded: new Date().toLocaleDateString(),
+          description: description,
+          visited: false,
+          capital: info.capital?.[0] || "N/A",
+          population: info.population?.toLocaleString() || "N/A",
+          languages: languages,
+          currency: currencies,
+          weather: weather,
+          latlng: info.latlng || [0, 0], // for map
+          travelTips: travelTips,
+          plan: "", // empty plan notes
+        };
+
+        // Save to localStorage
+        const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+
+        // Avoid duplicates by name
+        if (saved.some((d) => d.name === newDest.name)) {
+          alert("Destination already in your list.");
+          return;
+        }
+
+        saved.push(newDest);
+        localStorage.setItem("travelList", JSON.stringify(saved));
+        renderDestinations();
+        updateChart();
+      } catch (err) {
+        alert("Couldn't find destination. Please try another search.");
+        console.error(err);
+      }
+    }
+
+    // Toggle visited
+    function toggleVisited(index) {
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+      saved[index].visited = !saved[index].visited;
+      localStorage.setItem("travelList", JSON.stringify(saved));
+      renderDestinations();
+    }
+
+    // Remove destination
+    function removeDestination(index) {
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+      saved.splice(index, 1);
+      localStorage.setItem("travelList", JSON.stringify(saved));
+      renderDestinations();
+      updateChart();
+    }
+
+    // Clear all
+    function clearAll() {
+      if (confirm("Are you sure you want to clear all saved trips?")) {
+        localStorage.removeItem("travelList");
+        renderDestinations();
+        updateChart();
+      }
+    }
+
+    // Search saved trips
+    function searchSavedTrips() {
+      renderDestinations();
+    }
+
+    // Sort destinations
+    function sortDestinations() {
+      const sortSelect = document.getElementById("sortSelect").value;
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+
+      if (sortSelect === "date") {
+        saved.sort(
+          (a, b) =>
+            new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime()
+        );
+      } else if (sortSelect === "name") {
+        saved.sort((a, b) => a.name.localeCompare(b.name));
+      } else if (sortSelect === "tripType") {
+        saved.sort((a, b) => a.tripType.localeCompare(b.tripType));
+      } else if (sortSelect === "visited") {
+        saved.sort((a, b) => b.visited - a.visited);
+      }
+
+      localStorage.setItem("travelList", JSON.stringify(saved));
+      renderDestinations();
+    }
+
+    // Filter destinations (continent + trip type)
+    function filterDestinations() {
+      renderDestinations();
+    }
+
+    // Render all destinations
+    function renderDestinations() {
+      const continentFilter = document.getElementById("filterSelect").value;
+      const tripTypeFilter = document.getElementById("tripTypeFilter").value;
+      const searchSavedInput =
+        document.getElementById("searchSavedInput")?.value.toLowerCase() || "";
+      const container = document.getElementById("destinations");
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+      container.innerHTML = "";
+
+      saved.forEach((dest, index) => {
+        // Filters
+        if (
+          (continentFilter !== "all" && dest.region !== continentFilter) ||
+          (tripTypeFilter !== "all" && dest.tripType !== tripTypeFilter) ||
+          (searchSavedInput && !dest.name.toLowerCase().includes(searchSavedInput))
+        )
+          return;
+
+        const visitedBadge = dest.visited
+          ? `<span class="badge bg-success ms-2">Visited</span>`
+          : "";
+
+        // Card container
+        const card = document.createElement("div");
+        card.className = "col-md-6 col-lg-4";
+
+        card.innerHTML = `
+          <div class="card shadow-sm">
+            <img src="${dest.image}" class="card-img-top" alt="${dest.name}">
+            <div class="card-body">
+              <h5 class="card-title">${dest.name} ${visitedBadge}</h5>
+              <p class="card-text"><strong>Continent:</strong> ${dest.region}</p>
+              <p class="card-text"><strong>Trip Type:</strong> ${dest.tripType}</p>
+              <p class="card-text"><strong>Date Added:</strong> ${dest.dateAdded}</p>
+              <p class="card-text">${dest.description}</p>
+              <p class="card-text">
+                <strong>Capital:</strong> ${dest.capital} <br />
+                <strong>Population:</strong> ${dest.population} <br />
+                <strong>Languages:</strong> ${dest.languages} <br />
+                <strong>Currency:</strong> ${dest.currency}
+              </p>
+              <p class="card-text"><strong>Travel Tips:</strong> ${dest.travelTips}</p>
+              ${
+                dest.weather
+                  ? `<p class="card-text">
+                      <strong>Weather in ${dest.capital}:</strong> ${dest.weather.temp}°C, ${dest.weather.description}
+                      <img src="${dest.weather.icon}" alt="weather icon" style="vertical-align:middle;width:30px;"/>
+                    </p>`
+                  : ""
+              }
+              <div id="map${index}" class="mb-3"></div>
+              <label for="plan${index}"><strong>Trip Plan / Notes:</strong></label>
+              <textarea id="plan${index}" class="form-control mb-2" rows="3" placeholder="Add your plan or notes...">${dest.plan || ""}</textarea>
+              <button class="btn btn-primary btn-sm mb-2" onclick="savePlan(${index})">Save Plan</button>
+              <img src="${dest.flag}" width="40" alt="flag" class="mb-2" />
+              <div>
+                <button class="btn btn-success btn-sm me-2" onclick="toggleVisited(${index})">
+                  ${dest.visited ? "Mark as Not Visited" : "Mark as Visited"}
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="removeDestination(${index})">Remove</button>
+              </div>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+
+        // Initialize map for this destination
+        setTimeout(() => initMap(`map${index}`, dest.latlng), 100);
+      });
+    }
+
+    // Initialize Leaflet map
+    function initMap(containerId, latlng) {
+      const mapContainer = document.getElementById(containerId);
+      if (!mapContainer) return;
+      mapContainer.innerHTML = ""; // clear previous map if any
+      const map = L.map(containerId).setView(latlng, 5);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+      }).addTo(map);
+      L.marker(latlng).addTo(map);
+    }
+
+    // Save plan text for a trip
+    function savePlan(index) {
+      const textarea = document.getElementById(`plan${index}`);
+      if (!textarea) return;
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+      saved[index].plan = textarea.value;
+      localStorage.setItem("travelList", JSON.stringify(saved));
+      alert("Plan saved!");
+    }
+
+    // Chart update
+    function updateChart() {
+      const saved = JSON.parse(localStorage.getItem("travelList")) || [];
+      const counts = {};
+      saved.forEach((dest) => {
+        counts[dest.region] = (counts[dest.region] || 0) + 1;
+      });
+
+      const ctx = document.getElementById("continentChart").getContext("2d");
+      if (window.barChart) window.barChart.destroy();
+      window.barChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: Object.keys(counts),
+          datasets: [
+            {
+              label: "Destinations by Continent",
+              data: Object.values(counts),
+              backgroundColor: "rgba(54, 162, 235, 0.6)",
+              borderColor: "rgba(54, 162, 235, 1)",
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true,
+            },
+          },
+        },
+      });
+    }
+
+    // Initial load
+    renderDestinations();
+    updateChart();
+  </script>
+</body>
+</html>
